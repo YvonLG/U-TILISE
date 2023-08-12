@@ -1,10 +1,31 @@
 
 from typing import Callable
+from functools import partial
 
 import torch
 from torch import nn
 
-from .utils import get_norm, get_activ
+def get_activ(activ: str|Callable):
+    if callable(activ):
+        return activ
+    
+    if activ == 'relu':
+        return partial(nn.ReLU, inplace=True)
+    elif activ == 'none':
+        return nn.Identity
+    else:
+        raise NotImplementedError
+
+def get_norm(norm: str|Callable, n_groups: int|None=None):
+    if callable(norm):
+        return norm
+    
+    if norm == 'batch':
+        return nn.BatchNorm2d
+    elif norm == 'none':
+        return nn.Identity
+    else:
+        raise NotImplementedError
 
 class ConvBlock(nn.Module):
     """3x3 Conv2D followed by 3x3 res. Conv2D."""
@@ -68,8 +89,8 @@ class UpBlock(nn.Module):
         my_norm = get_norm(norm, n_groups)
 
         if upsample == 'basic':
-            self.up = nn.ConvTranspose2d(input_nc, output_nc, 3, 2, 1, padding_mode=padding)
-        elif upsample in ('nearest', 'linear', 'bilinear', 'bicubic', 'trilinear'):
+            self.up = nn.ConvTranspose2d(input_nc, output_nc, 3, 2, 1, padding_mode=padding, output_padding=1)
+        elif upsample == 'bilinear':
             self.up = nn.Sequential(
                 nn.Upsample(scale_factor=2, mode=upsample),
                 nn.Conv2d(input_nc, output_nc, 3, 1, 1, padding_mode=padding)
