@@ -115,7 +115,7 @@ class TimeSeriesDS(Dataset):
         self.use_transforms = use_transforms
         self.continuous_sample = continuous_sample
         self.s2_nch = s2_nch
-        self.s2_used_ch = s2_used_ch
+        self.s2_used_ch = np.arange(s2_nch) if s2_used_ch is None else np.array(s2_used_ch)
 
         self.rng = np.random.default_rng(seed)
 
@@ -134,9 +134,9 @@ class TimeSeriesDS(Dataset):
                 self.indices.append((idx, quadrant))
     
     def get_clouds_info(self, path: Path, quadrant: int|None=None):
-        cloud_probas = self.read_tif(path, quadrant)
+        cloud_probas = self.read_tif(path, None, quadrant)
         cloud_masks = cloud_probas > self.cloud_treshold * 100
-        cloud_agg = cloud_masks.sum(axis=(1, 2)) / self.image_size ** 2
+        cloud_agg = cloud_masks.mean(axis=(1, 2))
 
         cloudfree = cloud_agg < self.cloudfree_treshold
         fullcover = cloud_agg > self.fullcover_treshold
@@ -187,7 +187,7 @@ class TimeSeriesDS(Dataset):
             reader = csv.reader(src)
             header = next(reader)
             i = header.index('system:time_start')
-            doy = [row[i] for row in reader]
+            doy = [int(row[i]) for row in reader]
             doy = [datetime.fromtimestamp(d/1000).timetuple().tm_yday-1 for d in doy]
             return doy
 
@@ -263,14 +263,16 @@ class TimeSeriesDS(Dataset):
 
             doy = np.concatenate([doy, np.zeros(padding_size)])
         
+        s2 = np.clip(s2, 0, 10000) / 10000
         s2 = torch.Tensor(s2).to(dtype=torch.float32)
         masks = torch.Tensor(masks).to(dtype=torch.bool)
         doy = torch.Tensor(doy).to(dtype=torch.int16)
 
         if self.use_padding:
-            pad_mask = torch.cat([torch.zeros(n_images), torch.ones(padding_size)])
+            pad_mask = torch.cat([torch.zeros(n_images, dtype=torch.bool), torch.ones(padding_size, dtype=torch.bool)])
             return s2, masks, doy, pad_mask
         return s2, masks, doy 
 
     def __len__(self):
         return len(self.indices)
+
