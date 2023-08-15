@@ -65,7 +65,8 @@ def get_many_path_dicts(path: Path, sanity_check: bool=False, sanity_check_tresh
     return path_dicts
 
 class TimeSeriesDS(Dataset):
-    """`TimeSeriesDS` elements are cloudfree time series partially occluded with cloud masks from the same time serie."""
+    """`TimeSeriesDS` elements are cloudfree time series partially occluded with cloud masks from the same time serie.
+    Use `save_instance` and `load_instance` to avoid the preprocessing everytime."""
     def __init__(self,
                  path_dicts: PathDicts,
                  desired_len: int=10,
@@ -161,10 +162,6 @@ class TimeSeriesDS(Dataset):
         # copy to avoid negative stride
         return s2.copy(), masks.copy()
 
-    def save_instance(self, path: Path):
-        with open(path, 'wb') as src:
-            pickle.dump(self, src)
-
     @staticmethod
     def read_tif(path: Path, indices: List[int]|None=None, quadrant: int|None=None, full_size: int=256):
         half_size = full_size // 2
@@ -193,6 +190,10 @@ class TimeSeriesDS(Dataset):
             doy = [row[i] for row in reader]
             doy = [datetime.fromtimestamp(d/1000).timetuple().tm_yday-1 for d in doy]
             return doy
+
+    def save_instance(self, path: Path):
+        with open(path, 'wb') as src:
+            pickle.dump(self, src)
 
     @classmethod
     def from_instance(cls, path: Path):
