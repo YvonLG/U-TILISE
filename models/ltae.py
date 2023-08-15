@@ -10,12 +10,13 @@ class LTAE(nn.Module):
     def __init__(self, input_nc: int, n_heads: int, d_key: int, mlp_nc: List[int], attn_dropout: float=0.1, pos_encoding: bool=True):
         super(LTAE, self).__init__()
 
+        self.input_nc = input_nc
         self.n_heads = n_heads
         self.pos_encoding = pos_encoding
 
         self.group_norm1 = nn.GroupNorm(n_heads, input_nc)
         self.attn_heads = MultiHeadAttention(input_nc, n_heads, d_key)
-        self.attn_dropout = nn.Dropout(attn_dropout)
+        self.dropout = nn.Dropout(attn_dropout)
         self.group_norm2 = nn.GroupNorm(n_heads, input_nc)
         
         mlp_nc = [input_nc] + mlp_nc + [input_nc]
@@ -31,7 +32,7 @@ class LTAE(nn.Module):
 
         T = 1000
         self.d_hid = input_nc // n_heads
-        self.denom = torch.pow(T, 2 * torch.arange(1, self.d_hid+1) / self.d_hid) # d_hid
+        self.denom = torch.pow(T, 2 * torch.arange(1, self.d_hid+1) / self.d_hid)
 
     def forward(self, x: torch.Tensor, doy: torch.Tensor|None, pad_mask: torch.Tensor|None):
         bs, d_seq, nc, h, w = x.shape
@@ -40,20 +41,20 @@ class LTAE(nn.Module):
         v = self.group_norm1(v).transpose(1, 2) # bs * h * w x d_seq x nc
 
         if self.pos_encoding and doy is not None:
-            doy = doy.repeat_interleave(h*w, dim=0)
+            doy = doy.repeat_interleave(h * w, dim=0)
             pos = self.get_pos_encoding(doy)
-            pos = pos.tile(1, 1, self.n_heads)
             v += pos
 
         if pad_mask is not None:
             pad_mask = pad_mask.view(bs, 1, 1, d_seq).repeat_interleave(h*w, dim=0)
         out, attn = self.attn_heads(v, pad_mask)
-        attn = self.attn_dropout(attn)
 
+        out = self.dropout(out)
         out = out + v
         out = self.group_norm2(out.transpose(1, 2)).transpose(1, 2)
 
         out = out + self.mlp(out)
+        # NOTE: add residual here?
         out = self.group_norm3(out.transpose(1, 2)).transpose(1, 2)
 
         out = out.view(bs, h, w, d_seq, nc).permute(0, 3, 4, 1, 2).contiguous()
@@ -61,15 +62,16 @@ class LTAE(nn.Module):
         return out, attn
     
     def get_pos_encoding(self, doy: torch.Tensor) -> torch.Tensor:
-        # bs x d_seq
+        # doy: bs x d_seq
         bs, d_seq = doy.shape
-        doy = doy.view(bs, d_seq, 1).expand(-1, -1, self.d_hid) # bs x d_seq x d_model
+        doy = doy.view(bs, d_seq, 1).expand(-1, -1, self.d_hid) # bs x d_seq x d_hid
         denom = self.denom.view(1, 1, self.d_hid).expand(bs, d_seq, -1)
         denom = denom.to(doy.device)
 
         pos = doy / denom
         pos[:,:,0::2] = torch.sin(pos[:,:,0::2])
         pos[:,:,1::2] = torch.cos(pos[:,:,1::2])
+        pos = pos.repeat(1, 1, self.n_heads)
         return pos
 
 class MultiHeadAttention(nn.Module):
@@ -91,16 +93,18 @@ class MultiHeadAttention(nn.Module):
 
         kq = kq.view(bs, d_seq, self.n_heads, 2 * self.d_key)
         kq = kq.permute(0, 2, 1, 3) # bs x n_heads x d_seq x 2 * d_key
+        kq = kq.reshape(bs * self.n_heads, d_seq, 2 * self.d_key)
 
-        k, q = kq.chunk(2, dim=3) # bs x n_heads x d_seq x d_key
+        k, q = kq.chunk(2, dim=-1) # bs * n_heads x d_seq x d_key
         
-        attn = torch.matmul(q, k.transpose(2, 3)) / self.scale # bs x n_heads x d_seq x d_seq
+        attn = torch.bmm(q, k.transpose(1, 2)) / self.scale # bs * n_heads x d_seq x d_seq
+  
+        attn = attn.view(bs, self.n_heads, d_seq, d_seq)
         if pad_mask is not None:
             attn = torch.masked_fill(attn, pad_mask, -1e3)
-        attn = torch.softmax(attn, dim=3)
-
+        attn = torch.softmax(attn, dim=-1)
+        
         out = torch.matmul(attn, v.unsqueeze(1))
-
         out = out.permute(0, 2, 1, 3).reshape(bs, d_seq, -1)
         out = self.fc2(out)
 

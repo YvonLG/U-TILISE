@@ -8,9 +8,9 @@ import numpy as np
 from .utils import *
 
 class TimeSeriesDS(Dataset):
-    def __init__(self, path_dicts: PathDicts, dmax_seq: int=10, dmin_seq: int=5, occl_range: Tuple[int, int]=(4, 8), cloud_treshold: float=0.5,
+    def __init__(self, path_dicts: PathDicts, dmax_seq: int=10, dmin_seq: int=5, occl_range: int|Tuple[int, int]=(4, 8), cloud_treshold: float=0.5,
                  cloudfree_treshold: float=0.01, fullcover_treshold: float=0.99, use_quadrants: bool=True, s2_nch: int=4, s2_ch: List[int]|None=None,
-                 use_padding: bool=True, use_transforms: bool=True, seed: int|None=None, preprocess_file: Path|None=None,
+                 use_padding: bool=True, use_transforms: bool=True, sample_cloudfree: bool=False, seed: int|None=None, preprocess_file: Path|None=None,
                  ):
         self.path_dicts = path_dicts
 
@@ -25,6 +25,7 @@ class TimeSeriesDS(Dataset):
         self.s2_ch = np.arange(s2_nch) if s2_ch is None else np.array(s2_ch)
         self.use_padding = use_padding
         self.use_transforms = use_transforms
+        self.sample_cloudfree = sample_cloudfree
 
         self.image_size = 128 if use_quadrants else 256
 
@@ -102,28 +103,36 @@ class TimeSeriesDS(Dataset):
         partialcover_idx = np.where(partialcover)[0]
 
         if n_cloudfree >= self.dmax_seq:
-            start = self.rng.integers(0, n_cloudfree-self.dmax_seq+1)
             d_seq = self.dmax_seq
+
+            if self.sample_cloudfree:
+                cloudfree_idx = sorted(self.rng.choice(cloudfree_idx, d_seq, replace=False))
+
+            else:
+                start = self.rng.integers(0, n_cloudfree-self.dmax_seq+1)
+                cloudfree_idx = cloudfree_idx[start:start+d_seq]
         
         else:
-            start = 0
             d_seq = n_cloudfree
-
-        cloudfree_idx = cloudfree_idx[start:start+d_seq]
+            cloudfree_idx = cloudfree_idx[0:d_seq]
+        
 
         # choose the number of cloudfree images to mask
-        occl_range = (min(self.occl_range[0], d_seq), (min(self.occl_range[1], 1+d_seq)))
-        n_occl = self.rng.integers(*occl_range)
+        if isinstance(self.occl_range, int):
+            n_occl = min(self.occl_range, 1+d_seq)
+        else:
+            occl_range = (min(self.occl_range[0], d_seq), (min(self.occl_range[1], 1+d_seq)))
+            n_occl = self.rng.integers(*occl_range)
 
         # choose which images will be masked in the time serie
-        occluded_idx = sorted(self.rng.choice(d_seq, n_occl, replace=False))
+        occluded_idx = self.rng.choice(d_seq, n_occl, replace=False)
 
         # choose which masks to use among partially covered images
         occl_masks_idx = self.rng.choice(partialcover_idx, n_occl, replace=len(partialcover_idx) < n_occl)
 
         s2_indices = get_rio_indices(self.s2_nch, self.s2_ch, cloudfree_idx)
-        s2 = read_tif(path_dict['s2'], s2_indices, quadrant=quadrant) / 10000
-        s2 = s2.astype(np.float32)
+        s2 = read_tif(path_dict['s2'], s2_indices, quadrant=quadrant)
+        s2 = np.clip(s2, 0, 10000) / 10000
 
         masks = np.zeros((d_seq, self.image_size, self.image_size), dtype=bool)
         masks[occluded_idx] = clouds_masks[occl_masks_idx]
@@ -131,9 +140,6 @@ class TimeSeriesDS(Dataset):
         if self.use_transforms:
             s2, masks = self.transforms(s2, masks)
 
-        # broadcast masks to the shape of s2 and mask s2
-        masks_broadcast = np.repeat(masks, len(self.s2_ch), axis=0)
-        s2[masks_broadcast] = 1.
         s2 = s2.reshape(d_seq, len(self.s2_ch), self.image_size, self.image_size)
 
         doy = np.array(read_doy(path_dict['s2_properties']), dtype=np.int16)
@@ -148,8 +154,10 @@ class TimeSeriesDS(Dataset):
             masks = np.concatenate([masks, masks_padding], axis=0)
 
             doy = np.concatenate([doy, np.zeros(padding_size)])
-    
+
+        s2 = s2.astype(np.float32)
         s2 = torch.from_numpy(s2)
+        masks = masks.astype(bool)
         masks = torch.from_numpy(masks)
         doy = torch.from_numpy(doy)
 
