@@ -46,7 +46,8 @@ class TemporalAttentionEncoder2D(nn.Module):
 
         else:
             b, t = doy.shape
-            denom = repeat(self.denom, 'd_hid -> b t d_hid', b=b, t=t)
+            device = doy.device
+            denom = repeat(self.denom.to(device), 'd_hid -> b t d_hid', b=b, t=t)
             doy = repeat(doy, 'b t -> b t d_hid', d_hid=self.d_hid)
 
             pos = doy / denom
@@ -77,7 +78,7 @@ class TemporalAttentionEncoder2D(nn.Module):
         out = self.groupnorm3(out.transpose(1, 2)).transpose(1, 2)
 
         out = rearrange(out, '(h w b) t c -> b t c h w', h=h, w=w)
-        attn = rearrange(attn, 'head (h w b) t1 t2 -> head b t1 t2 h w', h=h, w=w)
+        attn = rearrange(attn, 'head (h w b) t1 t2 -> b head t1 t2 h w', h=h, w=w)
 
         return out, attn
 
