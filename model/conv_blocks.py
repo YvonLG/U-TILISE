@@ -5,7 +5,7 @@ from functools import partial
 import torch
 from torch import nn
 
-from utils import get_activ, get_norm
+from .utils import get_activ, get_norm
 
 class ConvBlock(nn.Module):
     """3x3 Conv2D followed by 3x3 res. Conv2D."""

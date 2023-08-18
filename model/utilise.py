@@ -6,8 +6,8 @@ from torch import nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
-from conv_blocks import ConvBlock, DownBlock, UpBlock
-from temporal_encoder import TemporalAttentionEncoder2D
+from .conv_blocks import ConvBlock, DownBlock, UpBlock
+from .temporal_encoder import TemporalAttentionEncoder2D
 
 class UTILISE(nn.Module):
     def __init__(self,
@@ -18,7 +18,7 @@ class UTILISE(nn.Module):
                  activ: str|Callable='relu',
                  norm: str|Callable='none',
                  padding: str='zeros',
-                 n_groups: int|None=None,
+                 n_groups: int=4,
                  upsample: str='bilinear',
                  n_heads: int=4,
                  d_key: int=4,
