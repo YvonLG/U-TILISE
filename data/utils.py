@@ -61,7 +61,7 @@ def get_many_path_dicts(path: Path, sanity_check: bool=False, sanity_check_tresh
 
 def split_path_dicts(path_dicts: PathDicts, proportions: List[float]):
 
-    assert abs(sum(proportions) - 1) < 0.0001
+    assert abs(sum(proportions) - 1) < 1e-5
     cumsum = [p + sum(proportions[:i]) for i, p in enumerate(proportions)]
     
     n_tot = len(path_dicts)
