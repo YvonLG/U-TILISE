@@ -1,8 +1,7 @@
 
-from typing import TypeAlias, List, Dict, Tuple
+from typing import List, Tuple
 import pickle
 from pathlib import Path
-import logging
 import csv
 from datetime import datetime
 
@@ -11,58 +10,7 @@ import torch
 import numpy as np
 import rasterio as rio
 
-
-PathDicts: TypeAlias = List[Dict[str, Path]]
-
-def get_path_dicts(path: Path, sanity_check: bool=False, sanity_check_treshold: int=100) -> PathDicts:
-    """The subfolder architecture must be:
-    `path`/
-    ├── time_serie1/
-    │   ├── s1.tif
-    │   ├── s2.tif
-    │   ├── s2cloudless.tif
-    │   ├── s1_propeties.csv
-    |   ├── s2_properties.csv
-    │   └── tile.json
-    ├── time_serie2/
-    ...
-    If `sanity_check` then all the s2 files will be opened and checked for an unusually high number of zeros.
-    The corrupted files are not returned."""
-    path_dicts = []
-
-    for dir in path.iterdir():
-        if not dir.is_dir():
-            continue
-        
-        path_dict = {
-            's1': dir / 's1.tif',
-            's2': dir / 's2.tif',
-            's2cloudless': dir / 's2cloudless.tif',
-            's1_properties': dir / 's1_properties.csv',
-            's2_properties': dir / 's2_properties.csv',
-            'tile': dir / 'tile.json',
-        }
-
-        if sanity_check:
-            with rio.open(path_dict['s2'], 'r') as src:
-                data = src.read()
-            n_zeros = np.count_nonzero(data == 0)
-            if n_zeros > sanity_check_treshold:
-                logging.info(f"{path_dict['s2'].as_posix()} is corrupted. {100 * n_zeros / np.prod(data.shape):2.2f}% of zeros.")
-                continue
-
-        path_dicts.append(path_dict)
-    return path_dicts
-
-def get_many_path_dicts(path: Path, sanity_check: bool=False, sanity_check_treshold: int=100) -> PathDicts:
-    """`path` must lead to a directory containing directories matching `get_path_dict` requirement's."""
-    path_dicts = []
-    for dir in path.iterdir():
-        if not dir.is_dir():
-            continue
-
-        path_dicts += get_path_dicts(dir, sanity_check, sanity_check_treshold)
-    return path_dicts
+from .utils import PathDicts
 
 class TimeSeriesDS(Dataset):
     """`TimeSeriesDS` elements are cloudfree time series partially occluded with cloud masks from the same time serie.
@@ -78,7 +26,7 @@ class TimeSeriesDS(Dataset):
                  use_quadrants: bool=True,
                  use_padding: bool=True,
                  use_transforms: bool=True,
-                 continuous_sample: bool=False,
+                 continuous_sample: bool=True,
                  s2_nch: int=4,
                  s2_used_ch: List[int]|None=None,
                  seed: int|None=None
@@ -219,7 +167,7 @@ class TimeSeriesDS(Dataset):
             n_images = self.desired_len
 
             if self.continuous_sample:
-                start = self.rng.integers(0, n_cloudfree-self.dmax_seq+1)
+                start = self.rng.integers(0, n_cloudfree-self.desired_len+1)
                 cloudfree_idx = cloudfree_idx[start:start+n_images]
             else:
                 cloudfree_idx = sorted(self.rng.choice(cloudfree_idx, n_images, replace=False))
