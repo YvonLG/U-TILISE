@@ -29,6 +29,8 @@ class TimeSeriesDS(Dataset):
                  continuous_sample: bool=True,
                  s2_nch: int=4,
                  s2_used_ch: List[int]|None=None,
+                 s1_nch: int=2,
+                 s1_used_ch: List[int]|None=None,
                  seed: int|None=None
                  ):
         """
@@ -64,6 +66,8 @@ class TimeSeriesDS(Dataset):
         self.continuous_sample = continuous_sample
         self.s2_nch = s2_nch
         self.s2_used_ch = np.arange(s2_nch) if s2_used_ch is None else np.array(s2_used_ch)
+        self.s1_nch = s1_nch
+        self.s1_used_ch = np.arange(s1_nch) if s1_used_ch is None else np.array(s1_used_ch)
 
         self.rng = np.random.default_rng(seed)
 
@@ -90,25 +94,28 @@ class TimeSeriesDS(Dataset):
         fullcover = cloud_agg > self.fullcover_treshold
         return cloudfree, fullcover, cloud_masks
     
-    def transforms(self, s2, masks):
+    def transforms(self, s2, s1, masks):
         # 90 deg. rotations
         k1 = self.rng.integers(0, 4)
         k2 = self.rng.integers(0, 4)
         s2 = np.rot90(s2, k1, (1, 2))
+        s1 = np.rot90(s1, k1, (1, 2))
         masks = np.rot90(masks, k2, (1, 2))
 
         # vertical and horizontal flips
         if self.rng.random() > 0.5:
             s2 = np.flip(s2, axis=1)
+            s1 = np.flip(s1, axis=1)
         if self.rng.random() > 0.5:
             masks = np.flip(masks, axis=1)
         
         if self.rng.random() > 0.5:
             s2 = np.flip(s2, axis=2)
+            s1 = np.flip(s1, axis=2)
             masks = np.flip(masks, axis=2)
 
         # copy to avoid negative stride
-        return s2.copy(), masks.copy()
+        return s2.copy(), s1.copy(), masks.copy()
 
     @staticmethod
     def read_tif(path: Path, indices: List[int]|None=None, quadrant: int|None=None, full_size: int=256):
@@ -191,13 +198,17 @@ class TimeSeriesDS(Dataset):
         s2 = self.read_tif(path_dict['s2'], s2_idx, quadrant)
         h, w = s2.shape[1:]
 
+        s1_idx = np.concatenate([1+self.s1_nch*idx+self.s1_used_ch for idx in cloudfree_idx]).tolist()
+        s1 = self.read_tif(path_dict['s1'], s1_idx, quadrant)
+
         masks = np.zeros((n_images, h, w), dtype=bool)
         masks[occl_idx] = cloud_masks[masks_idx]
 
         if self.use_transforms:
-            s2, masks = self.transforms(s2, masks)
+            s2, s1, masks = self.transforms(s2, s1, masks)
         
         s2 = s2.reshape(n_images, len(self.s2_used_ch), w, h)
+        s1 = s1.reshape(n_images, len(self.s1_used_ch), w, h)
 
         doy = np.array(self.read_doy(path_dict['s2_properties']))
         doy = doy[cloudfree_idx]
@@ -207,19 +218,24 @@ class TimeSeriesDS(Dataset):
             padding = np.ones((padding_size, len(self.s2_used_ch), h, w))
             s2 = np.concatenate([s2, padding], axis=0)
 
+            padding = np.ones((padding_size, len(self.s1_used_ch), h, w))
+            s1 = np.concatenate([s1, padding], axis=0)
+
             masks = np.concatenate([masks, padding[:,0]], axis=0)
 
             doy = np.concatenate([doy, np.zeros(padding_size)])
         
         s2 = np.clip(s2, 0, 10000) / 10000
         s2 = torch.Tensor(s2).to(dtype=torch.float32)
+        s1 = np.clip(s1, 0, 50000) / (-1000)
+        s1 = torch.Tensor(s1).to(dtype=torch.float32)
         masks = torch.Tensor(masks).to(dtype=torch.bool)
         doy = torch.Tensor(doy).to(dtype=torch.int16)
 
         if self.use_padding:
             pad_mask = torch.cat([torch.zeros(n_images, dtype=torch.bool), torch.ones(padding_size, dtype=torch.bool)])
-            return s2, masks, doy, pad_mask
-        return s2, masks, doy 
+            return s2, s1, masks, doy, pad_mask
+        return s2, s1, masks, doy 
 
     def __len__(self):
         return len(self.indices)
