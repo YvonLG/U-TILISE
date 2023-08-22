@@ -228,6 +228,7 @@ class TimeSeriesDS(Dataset):
         s2 = np.clip(s2, 0, 10000) / 10000
         s2 = torch.Tensor(s2).to(dtype=torch.float32)
         s1 = np.clip(s1, 0, 50000) / (-1000)
+        s1 = (s1 + 50) / 50
         s1 = torch.Tensor(s1).to(dtype=torch.float32)
         masks = torch.Tensor(masks).to(dtype=torch.bool)
         doy = torch.Tensor(doy).to(dtype=torch.int16)
