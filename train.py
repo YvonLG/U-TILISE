@@ -23,7 +23,7 @@ from model.utils import initialize_weights
 # TODO: use EARTHNET2021 dataset
 
 model_opt = dict(
-    input_nc=4,
+    input_nc=4+2,
     output_nc=4,
     nch=64,
     n_depth=3,
@@ -44,7 +44,7 @@ model_opt = dict(
 dataset_opt = dict(
     desired_len=10,
     min_len=5,
-    occl_range=(4, 8),
+    occl_range=(6, 8),
     cloud_treshold=0.5,
     cloudfree_treshold=0.01,
     fullcover_treshold=0.99,
@@ -54,6 +54,8 @@ dataset_opt = dict(
     continuous_sample=True,
     s2_nch=4,
     s2_used_ch=None,
+    s1_nch=2,
+    s1_used_ch=None,
     seed=None
 )
 
@@ -71,9 +73,10 @@ opt.update({
 })
 
 
-EPOCHS = 1
+EPOCHS = 3
 PROJECT = 'first-project'
-run_id = 'b1vdhzsb'
+run_id = '726vna2r'
+
 if run_id is None:
     run = wandb.init(project=PROJECT, config=opt)
     
@@ -114,7 +117,6 @@ else:
         path_dicts_valid = pickle.load(src)
     
     dataset_train = TimeSeriesDS(path_dicts=path_dicts_train, **wandb.config['dataset_opt'])
-    dataset_valid = TimeSeriesDS(path_dicts=path_dicts_valid, **wandb.config['dataset_opt'])
 
     model = UTILISE(**wandb.config['model_opt'])
     if not not_initialized:
@@ -129,7 +131,6 @@ if not_initialized:
 
 # GPU can't handle bs > 1 anyway
 dataloader_train = DataLoader(dataset_train, 1)
-dataloader_valid = DataLoader(dataset_valid, 1)
 
 optim = AdamW(model.parameters(),
               lr=wandb.config['learning_rate'],
@@ -147,14 +148,15 @@ for epoch in range(1, EPOCHS+1):
 
     for data in tqdm(dataloader_train):
         
-        if len(data) == 4:
-            s2, masks, doy, pad_mask = data
+        if len(data) == 5:
+            s2, s1, masks, doy, pad_mask = data
             pad_mask = pad_mask.to(device)
         else:
-            s2, masks, doy = data
+            s2, s1, masks, doy = data
             pad_mask = None
 
         s2 = s2.to(device)
+        s1 = s1.to(device)
         masks = masks.to(device)
         doy = doy.to(device)
 
@@ -162,7 +164,9 @@ for epoch in range(1, EPOCHS+1):
         masks_broadcast = masks.unsqueeze(2).expand_as(s2)
         s2_occl = torch.where(masks_broadcast, 1., s2)
 
-        s2_out = model(s2_occl, doy, pad_mask)
+        s2_and_s1 = torch.cat([s2_occl, s1], dim=2)
+
+        s2_out = model(s2_and_s1, doy, pad_mask)
         loss = criterion(s2_out[~pad_mask], s2[~pad_mask])
 
         optim.zero_grad()
